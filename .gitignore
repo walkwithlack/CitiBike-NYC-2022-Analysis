@@ -1,6 +1,10 @@
-# Ignore heavy folders
+﻿# Ignore heavy folders
 2.Data/
 4.Visualizations/
 
 # Streamlit cache
 3.Scripts/dashboard/cache/
+
+# System files
+.DS_Store
+Thumbs.db
