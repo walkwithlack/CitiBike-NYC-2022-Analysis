@@ -1,3 +1,6 @@
+# Data files required for this dashboard are hosted on Google Drive:
+# https://drive.google.com/drive/folders/18dn7QjYPa3z1ZIkUEGr9zHzWnwQxSUMz
+
 # nyc_citibike_dashboard.py
 
 import streamlit as st
