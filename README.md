@@ -13,3 +13,16 @@ For this project, you’ll be using public data from New York bike-sharing facil
 
 For this project, you’ll use open source data from the Citi Bike database for the year 2022. To enrich this data set, you’ll gather weather data using NOAA’s API service. You will then use Python libraries, including Matplotlib, Seaborn, and Plotly to make charts; pandas and Kepler.gl, to create maps; and Streamlit to design your final dashboard.
 
+## Data Access
+Due to size limits on GitHub, the full prepared dataset used by the Streamlit dashboards
+is hosted on Google Drive.
+
+Download the release data assets here (https://drive.google.com/drive/folders/18dn7QjYPa3z1ZIkUEGr9zHzWnwQxSUMz)
+**Contents include:**
+- nyc_2022_essential_data.csv (4.5 GB)
+- station_to_nta.csv
+- nta_daily_profile.pkl
+- nta_seasonal_profile.pkl
+- nta_daily_imbalance.pkl
+- nta_seasonal_imbalance.pkl
+- ... and other preprocessed artifacts.
