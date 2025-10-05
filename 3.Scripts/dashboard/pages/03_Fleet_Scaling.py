@@ -12,84 +12,96 @@ import requests
 
 st.set_page_config(page_title="Fleet Scaling Analysis", page_icon="📊", layout="wide")
 
-# -------- Helpers: resolve path or Drive link -> temp file --------
+# ──────────────────────────────────────────────────────────────────────────────
+# Helpers: resolve local path or Google Drive link/ID → temp file for chunked read
+# ──────────────────────────────────────────────────────────────────────────────
 
 def _gdrive_direct_url(link: str) -> str | None:
-    """Accept common Google Drive share formats and return a direct download URL, else None."""
+    """Accept common Google Drive share formats or raw file IDs; return a direct download URL."""
     if not isinstance(link, str):
         return None
-    m = re.search(r"/file/d/([a-zA-Z0-9_-]{20,})", link)
+    s = link.strip()
+    # Already a direct uc link?
+    if "drive.google.com/uc" in s and "id=" in s:
+        return s
+    # /file/d/<ID>/...
+    m = re.search(r"/file/d/([a-zA-Z0-9_-]{20,})", s)
     if not m:
-        m = re.search(r"[?&]id=([a-zA-Z0-9_-]{20,})", link)
+        # ?id=<ID>
+        m = re.search(r"[?&]id=([a-zA-Z0-9_-]{20,})", s)
     if not m:
-        if "drive.google.com/uc" in link and "id=" in link:
-            return link
+        # Raw ID?
+        if re.fullmatch(r"[A-Za-z0-9_-]{20,}", s):
+            fid = s
+            return f"https://drive.google.com/uc?export=download&id={fid}"
         return None
     fid = m.group(1)
     return f"https://drive.google.com/uc?export=download&id={fid}"
 
 @st.cache_data(show_spinner=False)
 def _download_to_temp(url: str, suffix: str = ".csv") -> str:
-    """Stream a remote file (incl. Google Drive confirm flow) to a temp file; return its path."""
-    import tempfile, requests
-
+    """Stream a remote file (handles Drive confirm token) to a temp file; return its path."""
     with requests.Session() as sess:
-        r = sess.get(url, stream=True, timeout=300)
-        # Handle Google Drive "virus scan too large" confirm step
+        r = sess.get(url, stream=True, timeout=60)
+        # Handle Drive confirm token for large files
         if "drive.google.com" in url and "confirm=" not in r.url:
             for k, v in r.cookies.items():
                 if k.startswith("download_warning"):
-                    sep = "&" if "?" in url else "?"
-                    url = f"{url}{sep}confirm={v}"
-                    r = sess.get(url, stream=True, timeout=300)
+                    url2 = url + ("&" if "?" in url else "?") + f"confirm={v}"
+                    r = sess.get(url2, stream=True, timeout=60)
                     break
         r.raise_for_status()
-
         with tempfile.NamedTemporaryFile(prefix="citibike_", suffix=suffix, delete=False) as tmp:
-            for chunk in r.iter_content(chunk_size=4 * 1024 * 1024):  # 4 MB chunks
+            for chunk in r.iter_content(chunk_size=4 * 1024 * 1024):
                 if chunk:
                     tmp.write(chunk)
             return tmp.name
 
 def resolve_input_path(user_input: str) -> str:
     """
-    If local path exists -> return it.
-    If Drive link -> download once to temp and return path.
-    Else -> raise with guidance.
+    If local path exists → return it.
+    If Drive link/ID → download to temp (cached) and return path.
+    Else → raise with guidance.
     """
     p = Path(user_input)
     if p.exists():
         return str(p)
-
     gdrive_url = _gdrive_direct_url(user_input)
     if gdrive_url:
-        st.info("Downloading data from Google Drive (cached after first download)...")
+        st.info("Downloading data from Google Drive (cached after first download)…")
         return _download_to_temp(gdrive_url, suffix=".csv")
-
     raise FileNotFoundError(
-        "Data file not found. Provide a valid local path or a Google Drive sharing link."
+        "Data file not found. Provide a valid local path or a Google Drive sharing link/ID."
     )
 
-# -------- Sidebar: default to your Drive link --------
+# ──────────────────────────────────────────────────────────────────────────────
+# Sidebar: default to your Google Drive link/ID
+# ──────────────────────────────────────────────────────────────────────────────
+
 st.sidebar.header("Data Configuration")
 file_path_input = st.sidebar.text_input(
-    "CSV path or Google Drive link:",
-    value="https://drive.google.com/file/d/10kp8fxIR7h1McO-shf0I42cjtj6VViu-/view?usp=sharing",
-    help="Paste a local path or a Google Drive share link to your 2022 trips CSV (essential subset)."
+    "CSV path or Google Drive link/ID:",
+    value="10kp8fxIR7h1McO-shf0I42cjtj6VViu-",  # your shared file ID
+    help="Paste a local path or a Google Drive share link/ID to your 2022 trips CSV (essential subset)."
 )
 
-# -------- Page intro --------
+# ──────────────────────────────────────────────────────────────────────────────
+# Page intro
+# ──────────────────────────────────────────────────────────────────────────────
+
 st.title("Q1: How much should we scale bikes back between November and April?")
+st.markdown("We size the fleet by **monthly peak-hour demand** (not averages), with a 10–15% safety margin.")
 
-st.markdown("""
-We care about **monthly peak-hour demand** (not averages) to size the fleet with a 10–15% safety margin.
-""")
+# ──────────────────────────────────────────────────────────────────────────────
+# Data loading & transforms
+# ──────────────────────────────────────────────────────────────────────────────
 
-# -------- Data loading & transforms --------
 @st.cache_data(show_spinner=True)
 def load_hourly_data(resolved_path: str) -> pd.Series:
-    """Aggregate hourly trip counts from CSV (chunked)."""
+    """Aggregate hourly trip counts from CSV (chunked). Requires a 'started_at' column."""
     hourly_counts: dict[pd.Timestamp, int] = {}
+    first_chunk = True
+
     for chunk in pd.read_csv(
         resolved_path,
         usecols=["started_at"],
@@ -99,12 +111,26 @@ def load_hourly_data(resolved_path: str) -> pd.Series:
         low_memory=True,
         encoding_errors="ignore",
     ):
+        if first_chunk:
+            # If usecols didn’t match (raises), we won’t get here. But double-check once.
+            if "started_at" not in chunk.columns:
+                raise KeyError(
+                    "Required column 'started_at' not found in CSV. "
+                    f"Available columns include: {list(chunk.columns)[:15]}…"
+                )
+            first_chunk = False
+
         s = pd.to_datetime(chunk["started_at"], errors="coerce")
         s = s[(s >= "2022-01-01") & (s < "2023-01-01")]
         s_hour = s.dt.floor("H").dropna()
         vc = s_hour.value_counts()
         for ts, cnt in vc.items():
             hourly_counts[ts] = hourly_counts.get(ts, 0) + int(cnt)
+
+    if not hourly_counts:
+        # Could be empty file or no 2022 rows
+        raise ValueError("No 2022 rows were found after parsing 'started_at' timestamps.")
+
     hourly = pd.Series(hourly_counts, dtype="int64").sort_index()
     return hourly
 
@@ -116,19 +142,25 @@ def calculate_monthly_peaks(hourly: pd.Series):
     peaks = hourly_df.loc[peak_idx].copy()
     peaks = peaks.reset_index().rename(columns={"index": "peak_hour"})
     peaks["month"] = peaks["month"].astype(str)
+
     if (peaks["month"] == "2022-09").any():
         sept_peak = int(peaks.loc[peaks["month"] == "2022-09", "trips"].iloc[0])
     else:
         sept_peak = int(peaks["trips"].max())
+
     peaks["%_of_september_peak"] = (peaks["trips"] / sept_peak * 100).round(1)
     peaks["month_label"] = pd.to_datetime(peaks["month"] + "-01").dt.strftime("%b")
     peaks["peak_hour_str"] = pd.to_datetime(peaks["peak_hour"]).dt.strftime("%Y-%m-%d %H:%M")
     return peaks.sort_values("month"), sept_peak
 
-# -------- Run --------
+# ──────────────────────────────────────────────────────────────────────────────
+# Run
+# ──────────────────────────────────────────────────────────────────────────────
+
 try:
     resolved = resolve_input_path(file_path_input)
-    with st.spinner("Loading and processing data..."):
+
+    with st.spinner("Loading and processing data…"):
         hourly = load_hourly_data(resolved)
         peaks, sept_peak = calculate_monthly_peaks(hourly)
 
@@ -216,9 +248,12 @@ try:
     st.download_button("Download Monthly Peak Data (CSV)", data=csv,
                        file_name="citibike_monthly_peaks_2022.csv", mime="text/csv")
 
+except KeyError as e:
+    st.error(f"Required column missing: {e}. Your CSV must include 'started_at'.")
+    st.info("If you used a different dataset, map/rename your timestamp column to 'started_at'.")
 except FileNotFoundError as e:
     st.error(str(e))
-    st.info("Tip: paste a Google Drive sharing link in the sidebar — it will download & cache automatically.")
+    st.info("Tip: paste a Google Drive share link/ID in the sidebar — it will download & cache automatically.")
 except Exception as e:
     st.error(f"Error loading data: {str(e)}")
     st.info("Please check your data path/link and format.")

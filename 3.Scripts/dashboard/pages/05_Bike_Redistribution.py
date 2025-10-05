@@ -29,16 +29,7 @@ st.set_page_config(page_title="Q3: How to approach Station Restocking in NYC?", 
 TOP_N = 300
 TARGET_STATIONS_PER_ZONE = 12
 SMOOTH_WINDOW = 3
-EPS = 1.0
-MIN_BLOCK_HOURS = 2
 MIN_ABS_C = 6
-CONSOLIDATION_TOLERANCE = 3
-OVERNIGHT_START = 23
-OVERNIGHT_END = 4
-RESIDENTIAL_MORNING_THRESHOLD = -20
-RESIDENTIAL_EVENING_THRESHOLD = 20
-RESIDENTIAL_MIDDAY_THRESHOLD = 15
-FLIP_PENALTY = 0.5
 
 # ──────────────────────────────────────────────────────────────────────────────
 # HELPERS: resolve local path OR Google Drive link → local filepath
@@ -87,22 +78,64 @@ def resolve_input_path(user_input: str) -> str:
     p = Path(user_input)
     if p.exists():
         return str(p)
-
     gdrive_url = _gdrive_direct_url(user_input)
     if gdrive_url:
         st.info("Downloading data from Google Drive (cached after first download)...")
         return _download_to_temp(gdrive_url, suffix=".csv")
-
     raise FileNotFoundError(
         "Data file not found. Provide a valid local path or a Google Drive sharing link."
     )
 
 # ──────────────────────────────────────────────────────────────────────────────
-# HELPER FUNCTIONS (existing)
+# ROBUST CSV READER + VALIDATION
+# ──────────────────────────────────────────────────────────────────────────────
+
+REQUIRED_COLS = {
+    "start_station_name", "end_station_name",
+    "start_lat", "start_lng", "end_lat", "end_lng",
+    "started_at", "ended_at"
+}
+
+def read_trips_csv_robust(path: str) -> pd.DataFrame:
+    """
+    Read the big trips CSV with forgiving settings and validate required columns.
+    If columns are missing, show a short peek of the file to reveal HTML/garbage cases.
+    """
+    try:
+        df = pd.read_csv(
+            path,
+            low_memory=False,
+            on_bad_lines="skip",
+            encoding_errors="ignore",
+            # Let pandas auto-detect compression from file extension
+            compression="infer"
+        )
+    except Exception as e:
+        st.error(f"Failed to read CSV: {e}")
+        raise
+
+    missing = [c for c in REQUIRED_COLS if c not in df.columns]
+    if missing:
+        # Peek first ~400 bytes to help diagnose (HTML page vs CSV)
+        try:
+            with open(path, "rb") as f:
+                head = f.read(400)
+        except Exception:
+            head = b""
+        st.error(f"Your file does not have the expected columns: missing {missing}.")
+        if head.startswith(b"<!DOCTYPE html") or b"<html" in head.lower():
+            st.info("This looks like an HTML page (likely a Google Drive interstitial or permission page). "
+                    "Double-check the sharing link and make sure 'Anyone with the link' can view.")
+        else:
+            st.caption(f"File header preview:\n{head[:400]!r}")
+        raise KeyError(str(missing))
+    return df
+
+# ──────────────────────────────────────────────────────────────────────────────
+# EXISTING HELPERS
 # ──────────────────────────────────────────────────────────────────────────────
 
 def haversine_distance(lat1, lon1, lat2, lon2):
-    """Calculate distance between two points in kilometers."""
     lat1, lon1, lat2, lon2 = map(np.radians, [lat1, lon1, lat2, lon2])
     dlat = lat2 - lat1
     dlon = lon2 - lon1
@@ -111,7 +144,6 @@ def haversine_distance(lat1, lon1, lat2, lon2):
     return 6371 * c
 
 def greedy_matching(supply_zones, demand_zones, top_k=15):
-    """Greedy nearest-neighbor matching between supply and demand zones."""
     if supply_zones.empty or demand_zones.empty:
         return pd.DataFrame(columns=['supply_zone', 'demand_zone', 'bikes_moved'])
     supply = supply_zones.copy()
@@ -158,7 +190,9 @@ def create_zone_hulls_geojson(stations_df, zones_to_show):
 @st.cache_data(show_spinner=True)
 def load_and_process_data(file_path):
     """Load data and perform all preprocessing steps."""
-    df = pd.read_csv(file_path)
+    df = read_trips_csv_robust(file_path)
+
+    # to_datetime where present
     for col in ["started_at", "ended_at", "date"]:
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], errors='coerce')
@@ -265,7 +299,6 @@ file_path_input = st.sidebar.text_input(
     help="Paste a local path or a Google Drive share link to the 2022 'essential' trips CSV."
 )
 
-# Load data
 try:
     resolved_path = resolve_input_path(file_path_input)
     with st.spinner("Loading and processing data... This may take a minute..."):
@@ -412,6 +445,9 @@ try:
 except FileNotFoundError as e:
     st.error(str(e))
     st.info("Paste a Google Drive sharing link in the sidebar — it will download & cache automatically.")
+except KeyError as e:
+    # Already surfaced a good explanation in read_trips_csv_robust
+    pass
 except Exception as e:
     st.error(f"Error: {str(e)}")
     st.info("Please check your data file and try again.")

@@ -10,3 +10,4 @@ shapely
 scikit-learn
 streamlit
 streamlit-folium
+requests

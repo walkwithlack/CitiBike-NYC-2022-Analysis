@@ -30,7 +30,7 @@ def gdrive_to_direct(url_or_id: str) -> str:
       - Just the raw <ID>
     Returns a direct-download URL.
     """
-    s = url_or_id.strip()
+    s = (url_or_id or "").strip()
     # Raw file ID?
     if re.fullmatch(r"[A-Za-z0-9_-]{20,}", s):
         return f"https://drive.google.com/uc?export=download&id={s}"
@@ -38,7 +38,7 @@ def gdrive_to_direct(url_or_id: str) -> str:
     if "uc?export=download&id=" in s:
         return s
     # Common view link
-    m = re.search(r"/d/([A-Za-z0-9_-]{20,})", s)
+    m = re.search(r"/d/([A-Za-z0-9_-]{20,})", s) or re.search(r"[?&]id=([A-Za-z0-9_-]{20,})", s)
     if m:
         return f"https://drive.google.com/uc?export=download&id={m.group(1)}"
     return s  # Fall back; may be a normal http(s) URL
@@ -65,10 +65,10 @@ def download_url(url: str) -> BytesIO:
         buf.seek(0)
         return buf
 
-    def load_csv_path_or_drive(input_str: str):
+def load_csv_path_or_drive(input_str: str):
     """
     Return a path (str) if local file exists, otherwise a BytesIO downloaded
-    from Google Drive/URL. Caller should pass this to pd.read_csv().
+    from Google Drive/URL. Caller can pass this directly to pd.read_csv().
     """
     p = Path(input_str)
     if p.exists():
@@ -76,7 +76,6 @@ def download_url(url: str) -> BytesIO:
     url = gdrive_to_direct(input_str)
     with st.spinner("Downloading data from Google Drive…"):
         return download_url(url)  # BytesIO for pandas
-
 
 # ──────────────────────────────────────────────────────────────────────────────
 # TITLE & INTRO
@@ -172,7 +171,7 @@ def get_waterfront_buffer():
 @st.cache_data(show_spinner=False)
 def load_station_data_any(input_str):
     """Load station_to_nta.csv from local path or Drive; flag waterfront via OSM buffer."""
-    station_to_nta = load_csv_path_or_drive(input_str)
+    station_to_nta = pd.read_csv(load_csv_path_or_drive(input_str))
 
     s = station_to_nta.copy()
     s["station_key"] = s["station_name"].astype("string").str.strip().str.lower()
@@ -207,20 +206,24 @@ def load_station_data_any(input_str):
 @st.cache_data(show_spinner=False)
 def calculate_endpoint_shares_any(trips_input_str, station_flags):
     """Supply/demand shares using local OR Drive trips CSV."""
-    trips_df_iter = pd.read_csv(load_csv_path_or_drive(trips_input_str), usecols=["start_station_name", "end_station_name"], chunksize=500_000, dtype="string", low_memory=False)
+    trips_df_iter = pd.read_csv(
+        load_csv_path_or_drive(trips_input_str),
+        usecols=["start_station_name", "end_station_name"],
+        chunksize=500_000, dtype="string", low_memory=False
+    )
     flag_map = dict(zip(station_flags['station_key'], station_flags['near_water']))
 
     supply_share = float(station_flags['near_water'].mean())
     total_stations = int(len(station_flags))
 
-    endpoints_water, total_trips = 0, 0
+    endpoints_water, total_rows = 0, 0
     for chunk in trips_df_iter:
         s = chunk["start_station_name"].str.strip().str.lower().map(flag_map).fillna(False)
         e = chunk["end_station_name"].str.strip().str.lower().map(flag_map).fillna(False)
         endpoints_water += int(s.sum() + e.sum())
-        total_trips += len(chunk)
+        total_rows += len(chunk)
 
-    demand_share = endpoints_water / (2 * total_trips) if total_trips else 0.0
+    demand_share = endpoints_water / (2 * total_rows) if total_rows else 0.0
     shortfall = max(0, int(round((demand_share - supply_share) * total_stations)))
     return {
         "supply_share": supply_share,
@@ -228,7 +231,7 @@ def calculate_endpoint_shares_any(trips_input_str, station_flags):
         "total_stations": total_stations,
         "waterfront_stations": int(station_flags['near_water'].sum()),
         "shortfall": shortfall,
-        "total_trips": total_trips,
+        "total_trips": total_rows,
         "waterfront_endpoints": endpoints_water,
     }
 
@@ -238,9 +241,11 @@ def calculate_station_activity_any(trips_input_str, station_flags):
     water_keys = set(station_flags[station_flags['near_water']]['station_key'])
     counts = Counter()
 
-    for chunk in pd.read_csv(load_csv_path_or_drive(trips_input_str),
-                             usecols=["start_station_name", "end_station_name"],
-                             dtype="string", chunksize=500_000, low_memory=False):
+    for chunk in pd.read_csv(
+        load_csv_path_or_drive(trips_input_str),
+        usecols=["start_station_name", "end_station_name"],
+        dtype="string", chunksize=500_000, low_memory=False
+    ):
         s = chunk["start_station_name"].str.strip().str.lower()
         e = chunk["end_station_name"].str.strip().str.lower()
         counts.update(s[s.isin(water_keys)].value_counts().to_dict())
@@ -263,9 +268,11 @@ def calculate_hourly_patterns_any(trips_input_str, station_flags, wf_counts):
 
     hour_counts = {k: np.zeros(24, dtype=np.int64) for k in hotspot_keys}
 
-    for chunk in pd.read_csv(load_csv_path_or_drive(trips_input_str),
-                             usecols=["start_station_name", "end_station_name", "started_at", "ended_at"],
-                             dtype="string", chunksize=500_000, low_memory=False):
+    for chunk in pd.read_csv(
+        load_csv_path_or_drive(trips_input_str),
+        usecols=["start_station_name", "end_station_name", "started_at", "ended_at"],
+        dtype="string", chunksize=500_000, low_memory=False
+    ):
         s_key = chunk["start_station_name"].str.strip().str.lower()
         e_key = chunk["end_station_name"].str.strip().str.lower()
         mask_hot = s_key.isin(hotspot_keys) | e_key.isin(hotspot_keys)
