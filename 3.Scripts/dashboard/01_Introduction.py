@@ -1,25 +1,86 @@
-# Data files required for this dashboard are hosted on Google Drive:
-# https://drive.google.com/drive/folders/18dn7QjYPa3z1ZIkUEGr9zHzWnwQxSUMz
-
 import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
+from io import BytesIO
+import requests
 
+# ----------------------------------
 # Page config
+# ----------------------------------
 st.set_page_config(page_title="CitiBike 2022 - Introduction", layout="wide")
 
-# Color scheme
+# ----------------------------------
+# Colors
+# ----------------------------------
 FLARE_COLORS = ['#e14b31', '#f47e3e', '#f7ad48', '#fbda5f', '#fef574', '#c9e583', '#88cc91', '#4ba99e']
 WEEKDAY_COLOR = '#e14b31'
 WEEKEND_COLOR = '#4ba99e'
 
-# Paths
+# ----------------------------------
+# Local paths (your machine)
+# ----------------------------------
 DATA_DIR = Path(r"C:\Users\magia\OneDrive\Desktop\NY_Citi_Bike\2.Data\Prepared Data\aggregated")
+PATH_TO_HTML = r"C:\Users\magia\OneDrive\Desktop\NY_Citi_Bike\4.Visualizations\new_york_citi_bike_map.html"
 
+# ----------------------------------
+# Google Drive direct-download URLs (fallback for Cloud)
+# ----------------------------------
+DRIVE_FILES = {
+    # CSVs (in DATA_DIR)
+    "trip_durations.csv":      "https://drive.google.com/uc?export=download&id=1W3zX7L9_1ht0lU0w_fnSG6UMcWYXPVN5",
+    "hourly_patterns.csv":     "https://drive.google.com/uc?export=download&id=18ANpyOF8DX7bPb6wvA3x318YVzf7XkDg",
+    "day_of_week_totals.csv":  "https://drive.google.com/uc?export=download&id=1vjdoMn0S2Jsej0Mo1OqrA9tY-y2DnH03",
+    "daily_aggregates.csv":    "https://drive.google.com/uc?export=download&id=1mU_QDgo3zeh6ukX8lz7ZCOMk8HCQ5Va3",
+    # Kepler HTML
+    "new_york_citi_bike_map.html": "https://drive.google.com/uc?export=download&id=1-X65o-K6olM0ZUHZE6OnpW25kqIMwdom",
+}
+
+# ----------------------------------
+# Helpers: load local or fetch from Drive
+# ----------------------------------
+def _download_bytes(url: str) -> bytes:
+    with requests.get(url, stream=True, timeout=60) as r:
+        r.raise_for_status()
+        return b"".join(chunk for chunk in r.iter_content(chunk_size=262_144) if chunk)
+
+@st.cache_data(show_spinner=False)
+def load_csv_any(base: Path, fname: str) -> pd.DataFrame:
+    local_path = base / fname
+    if local_path.exists():
+        return pd.read_csv(local_path)
+    url = DRIVE_FILES.get(fname)
+    if not url:
+        st.error(f"Missing **{fname}** and no Google Drive URL configured.")
+        st.stop()
+    try:
+        data = _download_bytes(url)
+        return pd.read_csv(BytesIO(data))
+    except Exception as e:
+        st.error(f"Failed to fetch **{fname}** from Google Drive.\n\n{e}")
+        st.stop()
+
+@st.cache_data(show_spinner=False)
+def load_text_any(local_full_path: str, fname: str) -> str:
+    p = Path(local_full_path)
+    if p.exists():
+        return p.read_text(encoding="utf-8")
+    url = DRIVE_FILES.get(fname)
+    if not url:
+        st.error(f"Missing **{fname}** and no Google Drive URL configured.")
+        st.stop()
+    try:
+        data = _download_bytes(url)
+        return data.decode("utf-8", errors="ignore")
+    except Exception as e:
+        st.error(f"Failed to fetch **{fname}** from Google Drive.\n\n{e}")
+        st.stop()
+
+# ----------------------------------
 # Header
+# ----------------------------------
 st.title("NYC CitiBike 2022 Analysis")
 st.markdown("## Introduction (Part 1 of 2): Getting Acquainted with the 2022 CitiBike Dataset")
 st.markdown("""
@@ -27,7 +88,6 @@ Before diving into operational recommendations, let's explore the CitiBike syste
 how people use it, when they ride, and what influences demand. These insights will inform our strategic questions 
 about fleet management, expansion, and redistribution.
 """)
-
 st.markdown("---")
 
 # ==================== CHART 1: Trip Duration ====================
@@ -36,7 +96,7 @@ st.markdown("*Histogram showing trip duration distribution (0-75 minutes) with K
 
 @st.cache_data
 def load_durations():
-    return pd.read_csv(DATA_DIR / "trip_durations.csv")
+    return load_csv_any(DATA_DIR, "trip_durations.csv")
 
 durations = load_durations()
 
@@ -55,7 +115,6 @@ st.markdown("""
 Most trips last between 3 and 6 minutes, followed by trips of 6-9 minutes. 
 This indicates that CitiBike is mostly used as a first- or last-mile mobility solution.
 """)
-
 st.markdown("---")
 
 # ==================== CHART 2: Weekday vs Weekend ====================
@@ -64,7 +123,7 @@ st.markdown("*Comparison of usage patterns between weekdays and weekends*")
 
 @st.cache_data
 def load_hourly_patterns():
-    return pd.read_csv(DATA_DIR / "hourly_patterns.csv")
+    return load_csv_any(DATA_DIR, "hourly_patterns.csv")
 
 overlay = load_hourly_patterns()
 
@@ -87,7 +146,6 @@ plt.close()
 st.markdown("""
 We see that there are two major usage modes in the system—commuter-driven weekday patterns with sharp morning and evening peaks versus leisure-focused weekend riding with a smoother daytime distribution.
 """)
-
 st.markdown("---")
 
 # ==================== CHART 3: Trip Volume by Day of Week ====================
@@ -96,10 +154,9 @@ st.markdown("*Total trips per day of week*")
 
 @st.cache_data
 def load_day_of_week():
-    return pd.read_csv(DATA_DIR / "day_of_week_totals.csv")
+    return load_csv_any(DATA_DIR, "day_of_week_totals.csv")
 
 dow_counts = load_day_of_week()
-
 dow_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 dow_counts['day_name'] = pd.Categorical(dow_counts['day_name'], categories=dow_order, ordered=True)
 dow_counts = dow_counts.sort_values('day_name')
@@ -122,7 +179,6 @@ plt.close()
 st.markdown("""
 The chart challenges an intuitive assumption by showing that weekends maintain substantial volume, not the dramatic drop-off one might expect. Saturday approaches weekday levels, and mid-week (Wednesday/Thursday) shows peak activity.
 """)
-
 st.markdown("---")
 
 # ==================== CHART 4: Weather Impact ====================
@@ -131,7 +187,7 @@ st.markdown("*Daily bike trips and temperature on dual axis (7-day smoothed)*")
 
 @st.cache_data
 def load_daily_aggregates():
-    df = pd.read_csv(DATA_DIR / "daily_aggregates.csv")
+    df = load_csv_any(DATA_DIR, "daily_aggregates.csv")
     df['date'] = pd.to_datetime(df['date'])
     df = df.set_index('date')
     df['rides_7'] = df['bike_rides_daily'].rolling(7, min_periods=1).mean()
@@ -171,23 +227,16 @@ plt.close()
 st.markdown("""
 The chart visualizes a strong correlation between temperature and bike usage—a critical factor for operational planning. The smoothed lines reveal the underlying seasonal trend while keeping daily fluctuations visible.
 """)
-
 st.markdown("---")
 
 # ==================== CHART 5: Kepler Map ====================
 st.markdown("### Chart 5: The CitiBike Network in Action")
 st.markdown("*Map showing highest-volume stations and major origin-destination flows*")
 
-path_to_html = r"C:\Users\magia\OneDrive\Desktop\NY_Citi_Bike\4.Visualizations\new_york_citi_bike_map.html"
-
-with open(path_to_html, 'r', encoding='utf-8') as f: 
-    html_data = f.read()
-
+html_data = load_text_any(PATH_TO_HTML, "new_york_citi_bike_map.html")
 st.components.v1.html(html_data, height=1000)
 
 st.markdown("""
 This is the spatial context for where demand concentrates and how bikes move through the city—the geographic foundation for understanding expansion and redistribution needs. Larger/darker stations indicate higher trip volumes, while connecting lines show major origin-destination flows.
 """)
-
 st.markdown("---")
-

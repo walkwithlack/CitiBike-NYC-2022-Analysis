@@ -1,17 +1,15 @@
-# Data files required for this dashboard are hosted on Google Drive:
-# https://drive.google.com/drive/folders/18dn7QjYPa3z1ZIkUEGr9zHzWnwQxSUMz
-
-# nyc_citibike_dashboard.py
+# nyc_citibike_dashboard.py (Page 2)
 
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
+from io import BytesIO
+import requests
 
 st.set_page_config(page_title="NYC CitiBike 2022 Analysis", layout="wide")
 
 st.title("NYC CitiBike 2022 Analysis")
-
 st.markdown("""
 ## Introduction (Part 2 of 2): Getting Acquainted with the 2022 Citibike Dataset
 """)
@@ -27,34 +25,57 @@ st.markdown("""
     - Near **0** → balanced flow.  
 - Views: *Average Day* (typical 24-hour pattern) or *Seasonal* (winter, spring, summer, fall)
 - Filters: Select **boroughs** and **neighborhoods (NTAs)** to focus on specific areas.
-
-As expected, we see changes in trip volume through the seasons. More interestingly, we also observe 
-imbalance ratios shifting through the seasons for different boroughs and neighborhoods, revealing 
-distinct usage patterns across NYC's geography and climate variations.
 """)
 
-
-# --- Load datasets from same folder as this script ---
+# --- Local data folder (your PC) ---
 BASE = Path(r"C:\Users\magia\OneDrive\Desktop\NY_Citi_Bike\2.Data\Prepared Data")
-PATH_DAILY_TRIPS  = BASE / "nta_daily_profile.pkl"         # expects: nta_name, borough, hour_of_day, avg_total_trips
-PATH_SEASON_TRIPS = BASE / "nta_seasonal_profile.pkl"      # expects: nta_name, borough, season, hour_of_day, avg_total_trips
-PATH_DAILY_IMB    = BASE / "nta_daily_imbalance.pkl"       # expects: nta_name, borough, hour_of_day, imbalance_ratio
-PATH_SEASON_IMB   = BASE / "nta_seasonal_imbalance.pkl"    # expects: nta_name, borough, season, hour_of_day, imbalance_ratio
+PATH_DAILY_TRIPS  = BASE / "nta_daily_profile.pkl"
+PATH_SEASON_TRIPS = BASE / "nta_seasonal_profile.pkl"
+PATH_DAILY_IMB    = BASE / "nta_daily_imbalance.pkl"
+PATH_SEASON_IMB   = BASE / "nta_seasonal_imbalance.pkl"
 
-# quick sanity display
+# --- Google Drive fallback (for Streamlit Cloud) ---
+# IDs supplied by you; #3 is pending (you sent a duplicate of #1).
+DRIVE_FILES = {
+    "nta_daily_profile.pkl":       "https://drive.google.com/file/d/1FOHo5ZTasdYrZhBvHjoM2KF00u9882fF/view?usp=sharing",
+    "nta_seasonal_profile.pkl":    "https://drive.google.com/uc?export=download&id=1awGMMQv_7KLijqMFWlkgT4FhauH8cMH9",
+    "nta_daily_imbalance.pkl":     "https://drive.google.com/uc?export=download&id=1_Ckv3_MlOEL4_dxz6LrURoB-w0yKf3lB",
+    "nta_seasonal_imbalance.pkl":  "https://drive.google.com/uc?export=download&id=1kMq6t3_ftO6kMjax6segbTcoMvHAmrtX",
+}
+
+def _download_bytes(url: str) -> bytes:
+    with requests.get(url, stream=True, timeout=60) as r:
+        r.raise_for_status()
+        return b"".join(chunk for chunk in r.iter_content(chunk_size=262_144) if chunk)
+
+@st.cache_data(show_spinner=False)
+def load_pkl_any(p: Path):
+    """Load a pickle from local path if present; else fetch from Google Drive mapping."""
+    if p.exists():
+        return pd.read_pickle(p)
+    url = DRIVE_FILES.get(p.name)
+    if not url or "REPLACE_WITH" in url:
+        st.error(
+            f"Missing **{p.name}** Google Drive ID. "
+            "Please provide a valid shared link and update DRIVE_FILES."
+        )
+        st.stop()
+    try:
+        data = _download_bytes(url)
+        return pd.read_pickle(BytesIO(data))
+    except Exception as e:
+        st.error(f"Failed to fetch **{p.name}** from Google Drive.\n\n{e}")
+        st.stop()
+
+# quick local existence display
 for p in [PATH_DAILY_TRIPS, PATH_SEASON_TRIPS, PATH_DAILY_IMB, PATH_SEASON_IMB]:
-    st.sidebar.caption(f"{p.name}: exists={p.exists()} · {p.resolve()}")
+    st.sidebar.caption(f"{p.name}: local_exists={p.exists()} · {p.resolve()}")
 
-@st.cache_data
-def load_pkl(p: Path):
-    if not p.exists():
-        raise FileNotFoundError(f"Missing file: {p.resolve()}")
-    return pd.read_pickle(p)
-
-daily_trips   = load_pkl(PATH_DAILY_TRIPS)
-season_trips  = load_pkl(PATH_SEASON_TRIPS)
-daily_imb     = load_pkl(PATH_DAILY_IMB)
-season_imb    = load_pkl(PATH_SEASON_IMB)
+# --- Load data (local-or-Drive) ---
+daily_trips   = load_pkl_any(PATH_DAILY_TRIPS)
+season_trips  = load_pkl_any(PATH_SEASON_TRIPS)
+daily_imb     = load_pkl_any(PATH_DAILY_IMB)
+season_imb    = load_pkl_any(PATH_SEASON_IMB)
 
 # --- Sidebar controls ---
 mode   = st.sidebar.radio("View mode", ["Average Day", "Seasonal"], index=0, key="mode")
@@ -72,7 +93,7 @@ else:
 if mode == "Seasonal":
     seasons = ["winter", "spring", "summer", "fall"]
     sel_season = st.sidebar.selectbox("Season", seasons, index=0, key="season")
-    df = df_all[df_all.get("season", sel_season) == sel_season]
+    df = df_all[df_all.get("season", sel_season) == sel_season] if "season" in df_all.columns else df_all.copy()
 else:
     df = df_all.copy()
 
