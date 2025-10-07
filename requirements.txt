@@ -9,5 +9,3 @@ streamlit-folium
 shapely
 scikit-learn
 pydeck>=0.8.0
-keplergl==0.3.2
-streamlit-keplergl==0.3.0
