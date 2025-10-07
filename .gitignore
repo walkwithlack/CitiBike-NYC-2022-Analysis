@@ -1,10 +1,21 @@
-﻿# Ignore heavy folders
-2.Data/
-4.Visualizations/
+﻿# Caches / bytecode
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
 
-# Streamlit cache
-3.Scripts/dashboard/cache/
-
-# System files
+# OS / IDE
 .DS_Store
 Thumbs.db
+.vscode/
+
+# Streamlit artifacts
+.streamlit/
+3.Scripts/dashboard/cache/
+
+# Ignore data by default…
+2.Data/
+
+# …but keep prepared files
+!2.Data/Prepared Data/
+!2.Data/Prepared Data/*.csv
+!2.Data/Prepared Data/*.pkl

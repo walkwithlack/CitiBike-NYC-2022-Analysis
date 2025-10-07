@@ -11,3 +11,6 @@ scikit-learn
 streamlit
 streamlit-folium
 requests
+keplergl
+streamlit-keplergl
+
