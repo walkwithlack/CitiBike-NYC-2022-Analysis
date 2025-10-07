@@ -91,28 +91,92 @@ def load_data():
 # ==================================================================================
 st.title("Q3: How to approach Station Restocking in NYC?")
 st.markdown("---")
-
-st.markdown("""
-This model identifies **when and where** to move bikes across 25 geographic zones (top 300 Manhattan stations). 
-It detects supply/demand imbalances at specific times and suggests efficient redistribution routes.
-""")
-
 with st.expander("📋 Problem Framing", expanded=False):
     st.markdown("""
-    **Core Challenge:** Identify stations that are net sources (trip origins) or sinks (destinations) at specific times.
-    **Why zones?** Vans face road constraints; zones keep moves short and practical.
+    **Core Challenge:** Identify stations that are net sources (trip origins) or sinks (destinations) at specific times, 
+    since bikes must come from somewhere to go elsewhere.
+    
+    **Multi-scale Patterns:**
+    - **Monthly:** Temperature affects total volume
+    - **Day-of-week:** Weekday vs. weekend behavior  
+    - **Hourly:** Commuter peaks flip stations from morning sinks to evening sources
+    
+    **Key Insight:** Many stations have bidirectional demand—high both starts *and* ends. We're **not seeking 
+    zero net flow**; some "balanced" stations need intervention to maintain capacity for expected demand patterns whereas "unbalanced" stations may be perfect that way at certain times.
+    
+    **Why Geographic Zones?** Redistribution vans face road constraints. We avoided trip-flow clustering 
+    (high-volume pairs aren't necessarily close) and administrative boundaries (users ignore these).
     """)
 
 with st.expander("🔧 Solution Approach (8 Steps)", expanded=False):
     st.markdown("""
-    K-means zones → block detection → consolidation → remove self-correcting residential patterns → pressure scaling →
-    sticky-zone penalty → greedy nearest-neighbor matching → user controls (β, thresholds, routes).
+    **1. Geographic Zones**  
+    K-means clustering (lat/lon) grouped top 300 stations → 25 static zones. Zones remain fixed; their roles shift over time.
+    
+    **2. Zone-Level Block Detection**  
+    For each zone×month×dow, detect time blocks where smoothed net flow (C = ends − starts) stays consistently 
+    positive (supply) or negative (demand). Minimum: 2 hours duration, |C| ≥ 6 bikes.
+    
+    **3. Two-Regime Consolidation**  
+    - **Overnight (23:00–04:00):** One canonical block per month×dow by summing hourly C  
+    - **Daytime (04:00–23:00):** Merge blocks within 3-hour tolerance  
+    Result: 4,644 fragmented blocks → 731 canonical windows (~9 per month×dow)
+    
+    **4. Self-Correcting Residential Zones**  
+    Exclude zones with morning deficits (C < −20), evening surpluses (C > +20), quiet middays (|C| < 15)—
+    they balance naturally. Found 45 combinations across 15 zones; excluded 311 block assignments.
+    
+    **5. Bidirectional Demand Adjustment**  
+    Calculate rental pressure (starts ÷ total activity) and return pressure (ends ÷ total activity):
+    - Supply zones scale by *return* pressure (preserve rental capacity)  
+    - Demand zones scale by *rental* pressure (acknowledge ongoing returns)  
+    Reduced movable quantities to 53% of raw |C|—prevents stripping busy stations bare.
+    
+    **6. Sticky Zones Heuristic**  
+    Zones flipping roles between consecutive blocks (supply ↔ demand) get 50% quantity reduction. 
+    Identified 2,737 sticky blocks (31.7%), preventing wasteful back-and-forth moves.
+    
+    **7. Greedy Matching**  
+    Match supply → demand by nearest-neighbor distance (Haversine). Move min(supply, demand) per route 
+    until exhausted or max routes reached.
+    
+    **8. User Controls**  
+    β parameter (0.1–0.9) scales all quantities (conservative ↔ aggressive). Additional filters for minimum 
+    moves and maximum routes. Interactive map shows zones, supply/demand status, and suggested routes—grounded 
+    in 2022 patterns and operational constraints.
     """)
 
 with st.expander("⚠️ Model Limitations", expanded=False):
     st.markdown("""
-    Historical-only, heuristic thresholds, smoothing blur, greedy (not optimal LP), and consolidation ambiguity.
+    **1. Historical Data Only**  
+    Uses 2022 data without real-time updates. Also missing: traffic, terrain, precipitation, staffing. Therefore, the model treats 2022 data as deterministic forecasts without uncertainty quantification.
+    
+    **2. Temporal Ambiguity from Consolidation**  
+    Merging blocks (±3hr tolerance) reduces fragmentation (4,644→731) but forces zones with different timing onto 
+    shared labels, obscuring precise intervention moments. Some consolidated blocks overlap (e.g., 04:00–13:00, 
+    05:00–09:00, 08:00–16:00), creating dropdown redundancy. Partially mitigated by focusing on top 300 Manhattan 
+    stations with synchronized patterns.
+    
+    **3. Threshold Sensitivity**  
+    Arbitrary cutoffs lack principled derivation: |C| ≥ 6, residential cutoffs, sticky penalty = 50%, β = 0.1–0.9. 
+    Small changes significantly alter recommendations without systematic optimization.
+    
+    **4. Greedy Matching Suboptimality**  
+    Nearest-neighbor heuristic is computationally simple but not guaranteed optimal for total route distance or 
+    operational efficiency (no linear programming).
+    
+    **5. Smoothing Temporal Blur**  
+    3-hour centered moving average stabilizes regime detection but blurs sharp transitions. A 9:00am shift may 
+    appear as gradual 8:30–9:30am, misaligning blocks with operational reality.
+    
+    ---
+    
+    *We built this model despite these substantial limitations as a way of engaging with the problem's complexity. For the full analysis 
+    with tailored (non-canonical) time blocks, see `NYC_Q3_Zone-Based_Restocking.ipynb`. For data preparation details, 
+    see `NYC_Q3_Extraction.ipynb`.*
     """)
+
+
 
 st.markdown("---")
 
