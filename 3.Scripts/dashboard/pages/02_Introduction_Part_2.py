@@ -1,43 +1,23 @@
-# Q0 — Introduction (Part 2): Borough & NTA seasonal patterns
-# Local-file-only version (no Google Drive)
+# Q0 — Introduction (Part 2): Borough & NTA seasonal patterns (repo-relative paths)
 
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
-from pathlib import Path
-from keplergl import KeplerGl
-import json
+from _paths import csv_path  # reads from repo on local + Streamlit Cloud
 
 st.set_page_config(page_title="Introduction (Part 2 of 2): Getting Acquainted with the 2022 Citi Bike Dataset", layout="wide")
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Data paths (LOCAL)
+# Helpers
 # ──────────────────────────────────────────────────────────────────────────────
-DATA_DIR = Path(r"C:\Users\magia\OneDrive\Desktop\NY_Citi_Bike\2.Data\Prepared Data")
-
-# Expected filenames
-PATH_DAILY_TRIPS   = DATA_DIR / "nta_daily_profile.pkl"
-PATH_SEASON_TRIPS  = DATA_DIR / "nta_seasonal_profile.pkl"
-PATH_DAILY_IMB     = DATA_DIR / "nta_daily_imbalance.pkl"
-PATH_SEASON_IMB    = DATA_DIR / "nta_seasonal_imbalance.pkl"
-
-def read_pickle_safely(path: Path) -> pd.DataFrame:
-    if not path.exists():
-        raise FileNotFoundError(f"Missing file: {path}")
-    return pd.read_pickle(path)
+def read_pickle(name: str) -> pd.DataFrame:
+    # name is a file like "nta_daily_profile.pkl"
+    return pd.read_pickle(csv_path(name))
 
 # ──────────────────────────────────────────────────────────────────────────────
 # UI
 # ──────────────────────────────────────────────────────────────────────────────
 st.title("Introduction (Part 2 of 2): Getting Acquainted with the 2022 Citi Bike Dataset")
-
-# Quick file check
-with st.sidebar:
-    st.header("Data files")
-    st.caption(f"Daily Trips: {PATH_DAILY_TRIPS}")
-    st.caption(f"Seasonal Trips: {PATH_SEASON_TRIPS}")
-    st.caption(f"Daily Imbalance: {PATH_DAILY_IMB}")
-    st.caption(f"Seasonal Imbalance: {PATH_SEASON_IMB}")
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Chart 5 — Borough/Neighborhood seasonality (Trips & Imbalance)
@@ -45,35 +25,29 @@ with st.sidebar:
 st.markdown("""
 ### Chart 5: How Do Trip Volume and Imbalance Ratios Change Through the Seasons Across NYC Boroughs?
 
-*Note*: This chart was built on pre-processed files. To check how these files were created, see NYC_02_Intro_Seasonal_Multi-line_Chart.ipynb.ipynb.
+*Note*: This chart was built on pre-processed files. To check how these files were created, see NYC_02_Intro_Seasonal_Multi-line_Chart.ipynb.
 
 **The chart shows:**
 - **Average Trips**: How many rides typically start/end in each neighborhood per hour.
-- **Imbalance Ratio**: (starts − ends) / (starts + ends)  
-  - Near **−1** → many more ends → docks may fill up  
-  - Near **+1** → many more starts → bikes may run out  
-  - Near **0** → balanced flow  
+- **Imbalance Ratio**: (starts − ends) / (starts + ends)
+  - Near **−1** → many more ends → docks may fill up
+  - Near **+1** → many more starts → bikes may run out
+  - Near **0** → balanced flow
 - Views: *Average Day* (typical 24-hour pattern) or *Seasonal* (winter, spring, summer, fall)
 - Filters: Select **boroughs** and **neighborhoods (NTAs)**.
-
-We see seasonal volume shifts and, more interestingly, **imbalance** shifts by borough/nta.
 """)
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Load data
-# ──────────────────────────────────────────────────────────────────────────────
+# Load data (repo-relative: no C:\ paths)
 try:
-    daily_trips  = read_pickle_safely(PATH_DAILY_TRIPS)   # cols: nta_name, borough, hour_of_day, avg_total_trips
-    season_trips = read_pickle_safely(PATH_SEASON_TRIPS)  # + season
-    daily_imb    = read_pickle_safely(PATH_DAILY_IMB)     # cols: nta_name, borough, hour_of_day, imbalance_ratio
-    season_imb   = read_pickle_safely(PATH_SEASON_IMB)    # + season
+    daily_trips  = read_pickle("nta_daily_profile.pkl")    # cols: nta_name, borough, hour_of_day, avg_total_trips
+    season_trips = read_pickle("nta_seasonal_profile.pkl") # + season
+    daily_imb    = read_pickle("nta_daily_imbalance.pkl")  # cols: nta_name, borough, hour_of_day, imbalance_ratio
+    season_imb   = read_pickle("nta_seasonal_imbalance.pkl") # + season
 except Exception as e:
     st.error(f"Failed to load one or more PKL files.\n\n{e}")
     st.stop()
 
-# ──────────────────────────────────────────────────────────────────────────────
 # Controls
-# ──────────────────────────────────────────────────────────────────────────────
 mode   = st.sidebar.radio("View mode", ["Average Day", "Seasonal"], index=0, key="mode")
 metric = st.sidebar.radio("Metric", ["Avg Trips", "Imbalance"], index=0, key="metric")
 
@@ -84,7 +58,6 @@ else:
     df_all = season_trips if metric == "Avg Trips" else season_imb
     value_col = "avg_total_trips" if metric == "Avg Trips" else "imbalance_ratio"
 
-# Optional season filter
 if mode == "Seasonal" and "season" in df_all.columns:
     seasons = ["winter", "spring", "summer", "fall"]
     sel_season = st.sidebar.selectbox("Season", seasons, index=0, key="season")
@@ -116,9 +89,7 @@ if not sel_ntas:
     st.info("Select at least one neighborhood.")
     st.stop()
 
-# ──────────────────────────────────────────────────────────────────────────────
 # Plot
-# ──────────────────────────────────────────────────────────────────────────────
 plot_df = (
     df[df["nta_name"].isin(sel_ntas)]
       .pivot_table(index="hour_of_day", columns="nta_name", values=value_col)
@@ -145,125 +116,104 @@ st.pyplot(fig)
 if metric == "Imbalance":
     st.caption("Imbalance: −1 = more **ends** (docks may fill up), +1 = more **starts** (bikes may run out).")
 
-st.markdown("""
-Testing across different seasons reveals that not only do trip volumes change, but in some cases the **directionality** of imbalances shifts—neighborhoods with surplus bikes (sinks) become neighborhoods of bike demand (sources), and vice versa.
-""")
-
 st.markdown("---")
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Chart 6 — Kepler.gl Map of Largest Flows (Origin-Destination) in NYC
+# Chart 6 — Kepler.gl Map of Largest Flows (Origin-Destination)
 # ──────────────────────────────────────────────────────────────────────────────
 st.markdown("### Chart 6: The Citi Bike Network in Action")
-st.markdown("*Map showing highest-volume stations and origin–destination flows of 1500+trips*")
-st.markdown("*Note*: This map was built with pre-processed data. To check their creation, see NYC_2.5_Kepler.gl_Preprocessing.ipynb")
+st.markdown("*Map showing highest-volume stations and origin–destination flows of 1500+ trips*")
+st.markdown("*Note*: Built from pre-processed data. See NYC_2.5_Kepler.gl_Preprocessing.ipynb")
 
-# Load CSVs for map
-stations = pd.read_csv(
-    r"C:\Users\magia\OneDrive\Desktop\NY_Citi_Bike\2.Data\Prepared Data\citibike_2022_stations_high_flow.csv",
-    index_col=False
-)
-df_flows = pd.read_csv(
-    r"C:\Users\magia\OneDrive\Desktop\NY_Citi_Bike\2.Data\Prepared Data\citibike_2022_flows_1500plus.csv",
-    index_col=False
-)
+# Load CSVs for map (repo-relative)
+stations = pd.read_csv(csv_path("citibike_2022_stations_high_flow.csv"))
+df_flows = pd.read_csv(csv_path("citibike_2022_flows_1500plus.csv"))
 
-# Center map on data coordinates
-center_lat = stations['lat'].mean()
-center_lon = stations['lng'].mean()
+# Try to import Kepler; if not installed (e.g., on Cloud), show a helpful note
+try:
+    from keplergl import KeplerGl
+    import streamlit.components.v1 as components
 
-# Color scheme (flare-like palette)
-flare_like = {
-    "name": "flare_like",
-    "type": "sequential",
-    "category": "Uber",
-    "colors": ["#2D1E3E", "#6B1F73", "#A22C7E", "#D6456C", "#F77C48", "#FDBD3C"]
-}
+    center_lat = stations['lat'].mean()
+    center_lon = stations['lng'].mean()
 
-# Kepler config
-cfg = {
-    "version": "v1",
-    "config": {
-        "visState": {
-            "filters": [
-                {
+    flare_like = {
+        "name": "flare_like",
+        "type": "sequential",
+        "category": "Uber",
+        "colors": ["#2D1E3E", "#6B1F73", "#A22C7E", "#D6456C", "#F77C48", "#FDBD3C"]
+    }
+
+    cfg = {
+        "version": "v1",
+        "config": {
+            "visState": {
+                "filters": [{
                     "dataId": "Flows",
                     "id": "trips_filter",
                     "name": ["trips"],
                     "type": "range",
                     "value": [1500, int(df_flows["trips"].max())],
                     "enlarged": True
-                }
-            ],
-            "layers": [
-                {
-                    "id": "stations-point",
-                    "type": "point",
-                    "config": {
-                        "dataId": "Stations",
-                        "label": "Stations",
-                        "columns": {"lat": "lat", "lng": "lng"},
-                        "isVisible": True,
-                        "visConfig": {
-                            "radius": 4,
-                            "colorRange": flare_like
-                        }
-                    },
-                    "visualChannels": {
-                        "colorField": {"name": "total_trips", "type": "integer"},
-                        "colorScale": "quantile",
-                        "sizeField": {"name": "total_trips", "type": "integer"},
-                        "sizeScale": "sqrt"
-                    }
-                },
-                {
-                    "id": "flows-arc",
-                    "type": "arc",
-                    "config": {
-                        "dataId": "Flows",
-                        "label": "OD Flows",
-                        "columns": {
-                            "lat0": "start_lat", "lng0": "start_lng",
-                            "lat1": "end_lat", "lng1": "end_lng"
+                }],
+                "layers": [
+                    {
+                        "id": "stations-point",
+                        "type": "point",
+                        "config": {
+                            "dataId": "Stations",
+                            "label": "Stations",
+                            "columns": {"lat": "lat", "lng": "lng"},
+                            "isVisible": True,
+                            "visConfig": {"radius": 4, "colorRange": flare_like}
                         },
-                        "isVisible": True,
-                        "visConfig": {
-                            "thickness": 4,
-                            "opacity": 0.7,
-                            "colorRange": flare_like
+                        "visualChannels": {
+                            "colorField": {"name": "total_trips", "type": "integer"},
+                            "colorScale": "quantile",
+                            "sizeField": {"name": "total_trips", "type": "integer"},
+                            "sizeScale": "sqrt"
                         }
                     },
-                    "visualChannels": {
-                        "sizeField": {"name": "trips", "type": "integer"},
-                        "sizeScale": "sqrt",
-                        "colorField": {"name": "trips", "type": "integer"},
-                        "colorScale": "quantile"
+                    {
+                        "id": "flows-arc",
+                        "type": "arc",
+                        "config": {
+                            "dataId": "Flows",
+                            "label": "OD Flows",
+                            "columns": {
+                                "lat0": "start_lat", "lng0": "start_lng",
+                                "lat1": "end_lat", "lng1": "end_lng"
+                            },
+                            "isVisible": True,
+                            "visConfig": {"thickness": 4, "opacity": 0.7, "colorRange": flare_like}
+                        },
+                        "visualChannels": {
+                            "sizeField": {"name": "trips", "type": "integer"},
+                            "sizeScale": "sqrt",
+                            "colorField": {"name": "trips", "type": "integer"},
+                            "colorScale": "quantile"
+                        }
                     }
-                }
-            ]
-        },
-        "mapState": {
-            "latitude": float(center_lat),
-            "longitude": float(center_lon),
-            "zoom": 12
+                ]
+            },
+            "mapState": {"latitude": float(center_lat), "longitude": float(center_lon), "zoom": 12}
         }
     }
-}
 
-# --- Kepler map: show inline in Streamlit (and optionally save) ---
-from keplergl import KeplerGl
-import streamlit.components.v1 as components
+    m = KeplerGl(height=650, config=cfg)
+    m.add_data(stations, "Stations")
+    m.add_data(df_flows, "Flows")
+    components.html(m._repr_html_(), height=650, scrolling=False)
 
-m = KeplerGl(height=650, config=cfg)
-m.add_data(stations, "Stations")
-m.add_data(df_flows, "Flows")
-
-# show inline
-components.html(m._repr_html_(), height=650, scrolling=False)
-
+except Exception as e:
+    st.error(
+        "KeplerGl isn’t available here. To enable this page on Streamlit Cloud, add to requirements.txt:\n"
+        "  • keplergl\n  • streamlit-keplergl\n\n"
+        f"(Import error was: {e})"
+    )
 
 st.markdown("""
-We see some of the strongest flows (thicker lines) along the Hudson waterfront and through Central Park — indicating that **even though Citi Bike mainly supports short first- or last-mile trips, its most popular routes are leisurely rides**.
+We see some of the strongest flows along the Hudson waterfront and through Central Park — indicating that **even though Citi Bike mainly supports short first- or last-mile trips, its most popular routes are leisurely rides**.
 """)
 
 st.markdown("""
