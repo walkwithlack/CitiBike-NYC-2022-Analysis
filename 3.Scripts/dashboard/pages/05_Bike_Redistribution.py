@@ -12,6 +12,9 @@ from _paths import csv_path
 warnings.filterwarnings('ignore')
 st.set_page_config(page_title="Q3: How to approach Station Restocking in NYC?", page_icon="🔄", layout="wide")
 
+st.markdown("---") # Brief overview always visible
+st.markdown(""" This simple model identifies **when and where** to move bikes across 25 geographic zones (top 300 Manhattan stations). It detects supply/demand imbalances at specific times and suggests efficient redistribution routes. """)
+
 # ==================================================================================
 # CONFIGURATION
 # ==================================================================================

@@ -1,9 +1,9 @@
-# Q0 — Introduction (Part 2): Borough & NTA seasonal patterns (repo-relative paths)
+# Q0 — Introduction (Part 2): Borough & NTA seasonal patterns 
 
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
-from _paths import csv_path  # reads from repo on local + Streamlit Cloud
+from _paths import csv_path 
 
 st.set_page_config(page_title="Introduction (Part 2 of 2): Getting Acquainted with the 2022 Citi Bike Dataset", layout="wide")
 
@@ -118,99 +118,24 @@ if metric == "Imbalance":
 
 st.markdown("---")
 
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Chart 6 — Kepler.gl Map of Largest Flows (Origin-Destination)
 # ──────────────────────────────────────────────────────────────────────────────
 st.markdown("### Chart 6: The Citi Bike Network in Action")
 st.markdown("*Map showing highest-volume stations and origin–destination flows of 1500+ trips*")
-st.markdown("*Note*: Built from pre-processed data. See NYC_2.5_Kepler.gl_Preprocessing.ipynb")
+st.markdown("*Note*: Built from pre-processed data. See NYC_02_Intro_Kepler.gl_Preprocessing.ipynb")
 
-# Load CSVs for map (repo-relative)
-stations = pd.read_csv(csv_path("citibike_2022_stations_high_flow.csv"))
-df_flows = pd.read_csv(csv_path("citibike_2022_flows_1500plus.csv"))
+# Embed pre-rendered Kepler HTML (repo-relative to repo root)
+from pathlib import Path
+import streamlit.components.v1 as components
 
-# Try to import Kepler; if not installed (e.g., on Cloud), show a helpful note
-try:
-    from keplergl import KeplerGl
-    import streamlit.components.v1 as components
-
-    center_lat = stations['lat'].mean()
-    center_lon = stations['lng'].mean()
-
-    flare_like = {
-        "name": "flare_like",
-        "type": "sequential",
-        "category": "Uber",
-        "colors": ["#2D1E3E", "#6B1F73", "#A22C7E", "#D6456C", "#F77C48", "#FDBD3C"]
-    }
-
-    cfg = {
-        "version": "v1",
-        "config": {
-            "visState": {
-                "filters": [{
-                    "dataId": "Flows",
-                    "id": "trips_filter",
-                    "name": ["trips"],
-                    "type": "range",
-                    "value": [1500, int(df_flows["trips"].max())],
-                    "enlarged": True
-                }],
-                "layers": [
-                    {
-                        "id": "stations-point",
-                        "type": "point",
-                        "config": {
-                            "dataId": "Stations",
-                            "label": "Stations",
-                            "columns": {"lat": "lat", "lng": "lng"},
-                            "isVisible": True,
-                            "visConfig": {"radius": 4, "colorRange": flare_like}
-                        },
-                        "visualChannels": {
-                            "colorField": {"name": "total_trips", "type": "integer"},
-                            "colorScale": "quantile",
-                            "sizeField": {"name": "total_trips", "type": "integer"},
-                            "sizeScale": "sqrt"
-                        }
-                    },
-                    {
-                        "id": "flows-arc",
-                        "type": "arc",
-                        "config": {
-                            "dataId": "Flows",
-                            "label": "OD Flows",
-                            "columns": {
-                                "lat0": "start_lat", "lng0": "start_lng",
-                                "lat1": "end_lat", "lng1": "end_lng"
-                            },
-                            "isVisible": True,
-                            "visConfig": {"thickness": 4, "opacity": 0.7, "colorRange": flare_like}
-                        },
-                        "visualChannels": {
-                            "sizeField": {"name": "trips", "type": "integer"},
-                            "sizeScale": "sqrt",
-                            "colorField": {"name": "trips", "type": "integer"},
-                            "colorScale": "quantile"
-                        }
-                    }
-                ]
-            },
-            "mapState": {"latitude": float(center_lat), "longitude": float(center_lon), "zoom": 12}
-        }
-    }
-
-    m = KeplerGl(height=650, config=cfg)
-    m.add_data(stations, "Stations")
-    m.add_data(df_flows, "Flows")
-    components.html(m._repr_html_(), height=650, scrolling=False)
-
-except Exception as e:
-    st.error(
-        "KeplerGl isn’t available here. To enable this page on Streamlit Cloud, add to requirements.txt:\n"
-        "  • keplergl\n  • streamlit-keplergl\n\n"
-        f"(Import error was: {e})"
-    )
+html_path = Path(__file__).resolve().parents[2] / "new_yor_citi_bike_map.html"  # your filename
+if html_path.exists():
+    components.html(html_path.read_text(encoding="utf-8"), height=650, scrolling=False)
+else:
+    st.error(f"Map HTML not found at: {html_path}")
+    st.caption("Commit the HTML file to the repo (under 100 MB), then rerun this page.")
 
 st.markdown("""
 We see some of the strongest flows along the Hudson waterfront and through Central Park — indicating that **even though Citi Bike mainly supports short first- or last-mile trips, its most popular routes are leisurely rides**.
