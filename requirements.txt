@@ -1,7 +1,6 @@
-streamlit>=1.38
+﻿streamlit>=1.38
 pandas
 numpy==1.26.4
-pyarrow==14.0.2
 plotly
 seaborn
 folium
