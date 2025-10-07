@@ -8,3 +8,5 @@ streamlit-folium
 shapely>=2.0
 scikit-learn
 
+keplergl
+streamlit-keplergl
