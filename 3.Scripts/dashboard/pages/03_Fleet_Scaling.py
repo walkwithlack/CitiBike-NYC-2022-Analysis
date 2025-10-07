@@ -1,238 +1,159 @@
-# Q1 — Fleet Scaling (auto Google Drive or local path)
+# Q1 — Fleet Scaling 
 
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import numpy as np
+import seaborn as sns
 from pathlib import Path
-from io import BytesIO
-import re
-import tempfile
-import requests
+
 
 st.set_page_config(page_title="Fleet Scaling Analysis", page_icon="📊", layout="wide")
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Helpers: resolve local path or Google Drive link/ID → temp file for chunked read
+# Data path (LOCAL ONLY — no Google Drive)
 # ──────────────────────────────────────────────────────────────────────────────
+DEFAULT_PATH = r"C:\Users\magia\OneDrive\Desktop\NY_Citi_Bike\2.Data\Prepared Data\peaks.csv"
+data_path = st.sidebar.text_input("Path to peaks.csv", value=DEFAULT_PATH)
 
-def _gdrive_direct_url(link: str) -> str | None:
-    """Accept common Google Drive share formats or raw file IDs; return a direct download URL."""
-    if not isinstance(link, str):
-        return None
-    s = link.strip()
-    # Already a direct uc link?
-    if "drive.google.com/uc" in s and "id=" in s:
-        return s
-    # /file/d/<ID>/...
-    m = re.search(r"/file/d/([a-zA-Z0-9_-]{20,})", s)
-    if not m:
-        # ?id=<ID>
-        m = re.search(r"[?&]id=([a-zA-Z0-9_-]{20,})", s)
-    if not m:
-        # Raw ID?
-        if re.fullmatch(r"[A-Za-z0-9_-]{20,}", s):
-            fid = s
-            return f"https://drive.google.com/uc?export=download&id={fid}"
-        return None
-    fid = m.group(1)
-    return f"https://drive.google.com/uc?export=download&id={fid}"
-
-@st.cache_data(show_spinner=False)
-def _download_to_temp(url: str, suffix: str = ".csv") -> str:
-    """Stream a remote file (handles Drive confirm token) to a temp file; return its path."""
-    with requests.Session() as sess:
-        r = sess.get(url, stream=True, timeout=60)
-        # Handle Drive confirm token for large files
-        if "drive.google.com" in url and "confirm=" not in r.url:
-            for k, v in r.cookies.items():
-                if k.startswith("download_warning"):
-                    url2 = url + ("&" if "?" in url else "?") + f"confirm={v}"
-                    r = sess.get(url2, stream=True, timeout=60)
-                    break
-        r.raise_for_status()
-        with tempfile.NamedTemporaryFile(prefix="citibike_", suffix=suffix, delete=False) as tmp:
-            for chunk in r.iter_content(chunk_size=4 * 1024 * 1024):
-                if chunk:
-                    tmp.write(chunk)
-            return tmp.name
-
-def resolve_input_path(user_input: str) -> str:
-    """
-    If local path exists → return it.
-    If Drive link/ID → download to temp (cached) and return path.
-    Else → raise with guidance.
-    """
-    p = Path(user_input)
-    if p.exists():
-        return str(p)
-    gdrive_url = _gdrive_direct_url(user_input)
-    if gdrive_url:
-        st.info("Downloading data from Google Drive (cached after first download)…")
-        return _download_to_temp(gdrive_url, suffix=".csv")
-    raise FileNotFoundError(
-        "Data file not found. Provide a valid local path or a Google Drive sharing link/ID."
-    )
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Sidebar: default to your Google Drive link/ID
-# ──────────────────────────────────────────────────────────────────────────────
-
-st.sidebar.header("Data Configuration")
-file_path_input = st.sidebar.text_input(
-    "CSV path or Google Drive link/ID:",
-    value="10kp8fxIR7h1McO-shf0I42cjtj6VViu-",  # your shared file ID
-    help="Paste a local path or a Google Drive share link/ID to your 2022 trips CSV (essential subset)."
+st.title("Q1: How much should we scale bikes back between November and April?")
+st.markdown(
+    "We know already that weather affects demand patterns overall, but this does not determine the operational ceiling we need to plan for. For scaling decisions, what matters is **peak demand at busy hours (and not total volume or daily averages)**. We group our rides by month and hour of day to find the maximum hourly trips in each month. Then we can compare winter peaks as a percentage of summer peaks, and by applying a margin of 10-15%, we can answer the question of how much we could scale back while still covering demand safely.."
+"*Note*: This chart was built on preprocessed data. To check their creation see NYC_Q1_Scaling_back.ipynb"
 )
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Page intro
+# Load data
 # ──────────────────────────────────────────────────────────────────────────────
+@st.cache_data
+def load_peaks(path_str: str) -> pd.DataFrame:
+    path = Path(path_str)
+    if not path.exists():
+        raise FileNotFoundError(f"File not found:\n{path}")
+    df = pd.read_csv(path, index_col=False).copy()
+    if "trips" not in df.columns:
+        raise KeyError("Column 'trips' is required in peaks.csv")
 
-st.title("Q1: How much should we scale bikes back between November and April?")
-st.markdown("We size the fleet by **monthly peak-hour demand** (not averages), with a 10–15% safety margin.")
+    # month label
+    if "month_label" not in df.columns:
+        if "month" in df.columns:
+            month_map = {1:"Jan",2:"Feb",3:"Mar",4:"Apr",5:"May",6:"Jun",
+                         7:"Jul",8:"Aug",9:"Sep",10:"Oct",11:"Nov",12:"Dec"}
+            df["month_label"] = pd.to_numeric(df["month"], errors="coerce").astype("Int64").map(month_map)
+        # fallback: keep strings like "September" -> "Sep"
+        df["month_label"] = df["month_label"].fillna(
+            df.get("month", pd.Series([None]*len(df))).astype(str).str.slice(0,3).str.title()
+        )
+        # final fallback if still missing
+        df["month_label"] = df["month_label"].fillna(pd.Series(range(1, len(df)+1), dtype="Int64").astype(str))
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Data loading & transforms
-# ──────────────────────────────────────────────────────────────────────────────
+    # peak hour string
+    if "peak_hour_str" not in df.columns:
+        if "peak_hour" in df.columns:
+            h = pd.to_numeric(df["peak_hour"], errors="coerce").fillna(0).astype(int).clip(0, 23)
+            df["peak_hour_str"] = h.astype(str).str.zfill(2) + ":00–" + ((h + 1) % 24).astype(str).str.zfill(2) + ":00"
+        else:
+            df["peak_hour_str"] = ""
 
-@st.cache_data(show_spinner=True)
-def load_hourly_data(resolved_path: str) -> pd.Series:
-    """Aggregate hourly trip counts from CSV (chunked). Requires a 'started_at' column."""
-    hourly_counts: dict[pd.Timestamp, int] = {}
-    first_chunk = True
-
-    for chunk in pd.read_csv(
-        resolved_path,
-        usecols=["started_at"],
-        chunksize=500_000,
-        dtype=str,
-        on_bad_lines="skip",
-        low_memory=True,
-        encoding_errors="ignore",
-    ):
-        if first_chunk:
-            # If usecols didn’t match (raises), we won’t get here. But double-check once.
-            if "started_at" not in chunk.columns:
-                raise KeyError(
-                    "Required column 'started_at' not found in CSV. "
-                    f"Available columns include: {list(chunk.columns)[:15]}…"
-                )
-            first_chunk = False
-
-        s = pd.to_datetime(chunk["started_at"], errors="coerce")
-        s = s[(s >= "2022-01-01") & (s < "2023-01-01")]
-        s_hour = s.dt.floor("H").dropna()
-        vc = s_hour.value_counts()
-        for ts, cnt in vc.items():
-            hourly_counts[ts] = hourly_counts.get(ts, 0) + int(cnt)
-
-    if not hourly_counts:
-        # Could be empty file or no 2022 rows
-        raise ValueError("No 2022 rows were found after parsing 'started_at' timestamps.")
-
-    hourly = pd.Series(hourly_counts, dtype="int64").sort_index()
-    return hourly
-
-@st.cache_data(show_spinner=False)
-def calculate_monthly_peaks(hourly: pd.Series):
-    hourly_df = hourly.rename("trips").to_frame()
-    hourly_df["month"] = hourly_df.index.to_period("M")
-    peak_idx = hourly_df.groupby("month")["trips"].idxmax()
-    peaks = hourly_df.loc[peak_idx].copy()
-    peaks = peaks.reset_index().rename(columns={"index": "peak_hour"})
-    peaks["month"] = peaks["month"].astype(str)
-
-    if (peaks["month"] == "2022-09").any():
-        sept_peak = int(peaks.loc[peaks["month"] == "2022-09", "trips"].iloc[0])
-    else:
-        sept_peak = int(peaks["trips"].max())
-
-    peaks["%_of_september_peak"] = (peaks["trips"] / sept_peak * 100).round(1)
-    peaks["month_label"] = pd.to_datetime(peaks["month"] + "-01").dt.strftime("%b")
-    peaks["peak_hour_str"] = pd.to_datetime(peaks["peak_hour"]).dt.strftime("%Y-%m-%d %H:%M")
-    return peaks.sort_values("month"), sept_peak
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Run
-# ──────────────────────────────────────────────────────────────────────────────
+    return df
 
 try:
-    resolved = resolve_input_path(file_path_input)
+    peaks = load_peaks(data_path)
+except Exception as e:
+    st.error(str(e))
+    st.stop()
 
-    with st.spinner("Loading and processing data…"):
-        hourly = load_hourly_data(resolved)
-        peaks, sept_peak = calculate_monthly_peaks(hourly)
+# ──────────────────────────────────────────────────────────────────────────────
+# Ensure % of September peak
+# ──────────────────────────────────────────────────────────────────────────────
+pct_col = "%_of_september_peak"
+have_pct = pct_col in peaks.columns
 
-    st.success(f"✓ Processed {len(hourly):,} hours of data from 2022")
-
-    # KPIs
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("September Peak", f"{sept_peak:,} trips", help="Highest monthly peak-hour demand")
-    with col2:
-        jan_val = (
-            int(peaks.loc[peaks["month"] == "2022-01", "trips"].iloc[0])
-            if (peaks["month"] == "2022-01").any()
-            else peaks["trips"].min()
+if not have_pct:
+    with st.sidebar:
+        st.markdown("**Percentage baseline** (only needed if CSV lacks '%_of_september_peak')")
+        sept_trips = st.number_input(
+            "September peak-hour trips (baseline)",
+            min_value=1, step=1, value=50000,
+            help="Used only to compute % of September peak when the CSV doesn't provide it."
         )
-        st.metric("January Peak", f"{jan_val:,} trips",
-                  delta=f"-{100 - (jan_val / sept_peak * 100):.1f}%", delta_color="inverse")
-    with col3:
-        winter_mask = peaks["month"].isin(["2022-12", "2023-01", "2023-02"])
-        avg_winter = peaks.loc[winter_mask, "trips"].mean() if winter_mask.any() else peaks["trips"].mean()
-        st.metric("Winter Avg Peak", f"{int(avg_winter):,} trips",
-                  delta=f"-{100 - (avg_winter / sept_peak * 100):.1f}%", delta_color="inverse")
+    # compute percentage from provided scalar
+    peaks[pct_col] = (peaks["trips"] / float(sept_trips) * 100).round(1)
 
-    st.markdown("---")
+# ──────────────────────────────────────────────────────────────────────────────
+# Plot (interactive)
+# ──────────────────────────────────────────────────────────────────────────────
+customdata_cols = ["peak_hour_str"]
+hover_template = (
+    "<b>%{x} 2022</b>"
+    "<br>Peak hour: %{customdata[0]}"
+    "<br>Peak-hour trips: %{y:,}"
+)
 
-    # Chart
-    st.subheader("Monthly Peak-Hour Demand")
-    colorscale = [
-        [0.0, "rgb(235,155,116)"], [0.1, "rgb(233,135,104)"], [0.2, "rgb(229,113,94)"],
-        [0.3, "rgb(222,93,92)"],  [0.4, "rgb(211,76,96)"],  [0.5, "rgb(193,65,104)"],
-        [0.6, "rgb(174,59,109)"], [0.7, "rgb(154,54,112)"], [0.8, "rgb(134,48,113)"],
-        [0.9, "rgb(114,44,110)"], [1.0, "rgb(94,40,104)"],
-    ]
+if pct_col in peaks.columns:
+    customdata_cols.append(pct_col)
+    hover_template += "<br>% of Sept peak: %{customdata[1]:.1f}%"
 
-    fig = px.bar(
-        peaks,
-        x="month_label",
-        y="trips",
-        color="trips",
-        color_continuous_scale=colorscale,
-        labels={"month_label": "Month", "trips": "Peak-hour trips"},
-    )
-    fig.update_traces(
-        hovertemplate="<b>%{x} 2022</b><br>Peak hour: %{customdata[0]}"
-                      "<br>Peak-hour trips: %{y:,}"
-                      "<br>% of Sept peak: %{customdata[1]:.1f}%<extra></extra>",
-        customdata=np.c_[peaks["peak_hour_str"], peaks["%_of_september_peak"]],
-    )
-    fig.add_hline(y=sept_peak, line_dash="dash", line_color="red",
-                  annotation_text=f"Sept peak = {sept_peak:,} trips", annotation_position="top left")
-    fig.update_layout(
-        title="Monthly Peak-Hour Demand — CitiBike NYC 2022",
-        xaxis_title="Month", yaxis_title="Peak-hour trips",
-        xaxis_tickangle=-45, height=500, showlegend=False, coloraxis_colorbar_title="Trips",
-    )
-    st.plotly_chart(fig, use_container_width=True)
 
-    # Table
-    st.markdown("---")
-    st.subheader("Detailed Monthly Breakdown")
-    display_df = peaks[["month_label", "peak_hour_str", "trips", "%_of_september_peak"]].copy()
-    display_df.columns = ["Month", "Peak Hour", "Peak Trips", "% of Sept Peak"]
-    st.dataframe(
-        display_df, use_container_width=True, hide_index=True,
-        column_config={"Peak Trips": st.column_config.NumberColumn(format="%d"),
-                       "% of Sept Peak": st.column_config.NumberColumn(format="%.1f%%")}
-    )
+# --- Exact Flare colorscale from seaborn ---
+palette = sns.color_palette("flare", 11)
+def rgb_tuple_to_str(t):
+    r, g, b = (int(round(255*x)) for x in t)
+    return f"rgb({r},{g},{b})"
+colorscale = [[i/(len(palette)-1), rgb_tuple_to_str(c)] for i, c in enumerate(palette)]
 
-    # Recommendations
-    st.markdown("---")
-    st.subheader("Scaling Recommendations")
-    st.markdown("""
+# --- Chart (unchanged except for colorscale=...) ---
+fig = px.bar(
+    peaks,
+    x="month_label",
+    y="trips",
+    color="trips", 
+    color_continuous_scale=colorscale,
+    labels={"month_label": "Month", "trips": "Peak-hour trips"},
+    title="Monthly Peak-Hour — Citi Bike NYC (2022)"
+)
+
+# % of September peak for hover
+fig.update_traces(
+    hovertemplate=hover_template + "<extra></extra>",
+    customdata=peaks[customdata_cols].to_numpy()
+)
+
+# --- Baseline at September's peak ---
+if have_pct:
+    # If there's a 100% row, use its trips; else back out baseline from trips & %
+    if (peaks[pct_col] == 100).any():
+        sept_peak_line = float(peaks.loc[peaks[pct_col].idxmax(), "trips"])
+    else:
+        # trips = baseline * (%/100)  => baseline = trips / (%/100)
+        sept_peak_line = float((peaks["trips"] / (peaks[pct_col] / 100.0)).max())
+else:
+    # We asked the user for a scalar 'sept_trips' in the sidebar above
+    sept_peak_line = float(sept_trips)
+
+fig.add_hline(
+    y=sept_peak_line,
+    line_dash="dash",
+    line_color="red",
+    annotation_text=f"Sept peak = {int(sept_peak_line):,} trips",
+    annotation_position="top left"
+)
+
+
+fig.update_layout(
+    xaxis_title="Month",
+    yaxis_title="Peak-hour trips",
+    xaxis_tickangle=-45,
+    margin=dict(l=40, r=20, t=60, b=60),
+    coloraxis_colorbar_title="Trips"
+)
+
+st.plotly_chart(fig, use_container_width=True)
+
+# --- Recommendations ---
+
+st.subheader("Scaling Recommendations")
+st.markdown("""
     Based on peak-hour demand with a 10–15% safety margin:
     - **Nov**: ~88% → no major cut  
     - **Dec**: ~55% → **scale back 30–40%**  
@@ -242,18 +163,15 @@ try:
     - **Apr**: ~90% → **full capacity**
     """)
 
-    # Download
-    st.markdown("---")
-    csv = peaks.to_csv(index=False)
-    st.download_button("Download Monthly Peak Data (CSV)", data=csv,
-                       file_name="citibike_monthly_peaks_2022.csv", mime="text/csv")
+# ──────────────────────────────────────────────────────────────────────────────
+# Download & quick table
+# ──────────────────────────────────────────────────────────────────────────────
+st.markdown("---")
+st.subheader("Data used in this chart")
+show_cols = ["month_label", "peak_hour_str", "trips", pct_col]
+show_cols = [c for c in show_cols if c in peaks.columns]
+st.dataframe(peaks[show_cols])
 
-except KeyError as e:
-    st.error(f"Required column missing: {e}. Your CSV must include 'started_at'.")
-    st.info("If you used a different dataset, map/rename your timestamp column to 'started_at'.")
-except FileNotFoundError as e:
-    st.error(str(e))
-    st.info("Tip: paste a Google Drive share link/ID in the sidebar — it will download & cache automatically.")
-except Exception as e:
-    st.error(f"Error loading data: {str(e)}")
-    st.info("Please check your data path/link and format.")
+csv = peaks[show_cols].to_csv(index=False)
+st.download_button("Download monthly peaks (CSV)", data=csv,
+                   file_name="citibike_monthly_peaks_2022.csv", mime="text/csv")
