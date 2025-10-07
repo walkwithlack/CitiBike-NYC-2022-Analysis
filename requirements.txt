@@ -1,16 +1,10 @@
-folium
-geopandas
-matplotlib
-numpy
-osmnx
+streamlit>=1.38
 pandas
+numpy
 plotly
 seaborn
-shapely
-scikit-learn
-streamlit
+folium
 streamlit-folium
-requests
-keplergl
-streamlit-keplergl
+shapely>=2.0
+scikit-learn
 
