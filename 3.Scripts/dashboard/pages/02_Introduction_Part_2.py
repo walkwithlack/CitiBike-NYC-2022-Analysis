@@ -120,22 +120,22 @@ st.markdown("---")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Chart 6 — Kepler.gl Map of Largest Flows (Origin-Destination)
+# Chart 6 — Kepler.gl Map of Largest Flows (Origin–Destination)
 # ──────────────────────────────────────────────────────────────────────────────
 st.markdown("### Chart 6: The Citi Bike Network in Action")
 st.markdown("*Map showing highest-volume stations and origin–destination flows of 1500+ trips*")
-st.markdown("*Note*: Built from pre-processed data. See NYC_02_Intro_Kepler.gl_Preprocessing.ipynb")
+st.markdown("*Note*: Built from pre-processed data. See NYC_2.5_Kepler.gl_Preprocessing.ipynb & make_kepler_map_light.py")
 
-# Embed pre-rendered Kepler HTML (repo-relative to repo root)
-from pathlib import Path
 import streamlit.components.v1 as components
+from _paths import REPO_ROOT  # reuse repo root
 
-html_path = Path(__file__).resolve().parents[2] / "new_yor_citi_bike_map.html"  # your filename
+html_path = REPO_ROOT / "3.Scripts" / "dashboard" / "assets" / "kepler_map_light.html"
 if html_path.exists():
     components.html(html_path.read_text(encoding="utf-8"), height=650, scrolling=False)
 else:
     st.error(f"Map HTML not found at: {html_path}")
-    st.caption("Commit the HTML file to the repo (under 100 MB), then rerun this page.")
+    st.caption("Make sure the lightweight HTML is committed to the repo.")
+
 
 st.markdown("""
 We see some of the strongest flows along the Hudson waterfront and through Central Park — indicating that **even though Citi Bike mainly supports short first- or last-mile trips, its most popular routes are leisurely rides**.
