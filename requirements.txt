@@ -1,10 +1,6 @@
-﻿streamlit>=1.38
-pandas
-numpy==1.26.4
 plotly
-seaborn
-folium
-streamlit-folium
-shapely
-scikit-learn
-pydeck>=0.8.0
+streamlit
+matplotlib
+streamlit_keplergl
+numerize
+pillow
